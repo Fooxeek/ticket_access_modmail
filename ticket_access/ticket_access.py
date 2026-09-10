@@ -3,14 +3,20 @@ Plugin Ticket Access - ModMail
 Permet d'ajouter ou de retirer un membre du staff sur un ticket en cours,
 en modifiant les permissions du canal Discord associé au thread ModMail.
 
+Seuls les membres possédant le rôle HELPER_ROLE_ID (défini ci-dessous)
+peuvent être ajoutés/retirés d'un ticket via ces commandes.
+
 COMMANDES :
-  ?addtoticket <membre>     — Donne accès au ticket courant (MODERATOR)
-  ?removetoticket <membre>  — Retire l'accès au ticket courant (MODERATOR)
+  ?addtoticket <membre>        — Donne accès au ticket courant (MODERATOR)
+  ?removefromticket <membre>   — Retire l'accès au ticket courant (MODERATOR)
 """
 import discord
 from discord.ext import commands
 from core import checks
 from core.models import PermissionLevel
+
+# ID du rôle requis pour qu'un membre puisse être ajouté/retiré d'un ticket.
+HELPER_ROLE_ID = 326464995682418688
 
 COLOR_SUCCESS = discord.Color.green()
 COLOR_INFO = discord.Color.blue()
@@ -31,12 +37,36 @@ class TicketAccess(commands.Cog):
     async def _send_error(self, ctx, title: str, description: str):
         await ctx.send(embed=discord.Embed(title=title, description=description, color=COLOR_DANGER))
 
+    def _get_helper_role(self, ctx) -> discord.Role:
+        return ctx.guild.get_role(HELPER_ROLE_ID)
+
+    def _check_role(self, ctx, member: discord.Member):
+        """Retourne (ok, helper_role). ok=False si le rôle est introuvable ou absent du membre."""
+        helper_role = self._get_helper_role(ctx)
+        if helper_role is None:
+            return False, None
+        return (helper_role in member.roles), helper_role
+
     # ── Commande d'ajout ───────────────────────────────────────────────────
 
     @commands.command(name="addtoticket")
     @checks.has_permissions(PermissionLevel.MODERATOR)
     async def add_to_ticket(self, ctx, member: discord.Member):
         """Ajoute un membre au ticket courant (accès lecture/écriture au canal)."""
+        ok, helper_role = self._check_role(ctx, member)
+        if helper_role is None:
+            await self._send_error(
+                ctx, "❌ Rôle introuvable",
+                f"Le rôle configuré (ID `{HELPER_ROLE_ID}`) n'existe pas sur ce serveur.",
+            )
+            return
+        if not ok:
+            await self._send_error(
+                ctx, "❌ Rôle requis manquant",
+                f"{member.mention} n'a pas le rôle {helper_role.mention}, requis pour être ajouté à un ticket.",
+            )
+            return
+
         thread = await self._get_thread(ctx)
         if not thread:
             await self._send_error(
@@ -67,7 +97,7 @@ class TicketAccess(commands.Cog):
         except discord.Forbidden:
             await self._send_error(
                 ctx, "❌ Permission refusée",
-                "Le bot n'a pas la permission `Gérer les salons` sur ce canal.",
+                "Le bot n'a pas la permission `Gérer les rôles` sur ce canal.",
             )
             return
         except discord.HTTPException as e:
@@ -90,10 +120,25 @@ class TicketAccess(commands.Cog):
 
     # ── Commande de retrait ────────────────────────────────────────────────
 
-    @commands.command(name="removetoticket")
+    @commands.command(name="removefromticket")
     @checks.has_permissions(PermissionLevel.MODERATOR)
     async def remove_from_ticket(self, ctx, member: discord.Member):
         """Retire l'accès d'un membre au ticket courant."""
+        ok, helper_role = self._check_role(ctx, member)
+        if helper_role is None:
+            await self._send_error(
+                ctx, "❌ Rôle introuvable",
+                f"Le rôle configuré (ID `{HELPER_ROLE_ID}`) n'existe pas sur ce serveur.",
+            )
+            return
+        if not ok:
+            await self._send_error(
+                ctx, "❌ Rôle requis manquant",
+                f"{member.mention} n'a pas le rôle {helper_role.mention}. "
+                f"Seuls les membres avec ce rôle peuvent être gérés via cette commande.",
+            )
+            return
+
         thread = await self._get_thread(ctx)
         if not thread:
             await self._send_error(
@@ -122,7 +167,7 @@ class TicketAccess(commands.Cog):
         except discord.Forbidden:
             await self._send_error(
                 ctx, "❌ Permission refusée",
-                "Le bot n'a pas la permission `Gérer les salons` sur ce canal.",
+                "Le bot n'a pas la permission `Gérer les rôles` sur ce canal.",
             )
             return
         except discord.HTTPException as e:
