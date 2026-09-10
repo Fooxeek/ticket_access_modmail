@@ -5,7 +5,7 @@ en modifiant les permissions du canal Discord associé au thread ModMail.
 
 COMMANDES :
   ?addtoticket <membre>     — Donne accès au ticket courant (MODERATOR)
-  ?removefromticket <membre>  — Retire l'accès au ticket courant (MODERATOR)
+  ?removetoticket <membre>  — Retire l'accès au ticket courant (MODERATOR)
 """
 import discord
 from discord.ext import commands
@@ -90,7 +90,7 @@ class TicketAccess(commands.Cog):
 
     # ── Commande de retrait ────────────────────────────────────────────────
 
-    @commands.command(name="removefromticket")
+    @commands.command(name="removetoticket")
     @checks.has_permissions(PermissionLevel.MODERATOR)
     async def remove_from_ticket(self, ctx, member: discord.Member):
         """Retire l'accès d'un membre au ticket courant."""
