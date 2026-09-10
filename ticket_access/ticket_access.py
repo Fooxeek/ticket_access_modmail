@@ -3,10 +3,12 @@ Plugin Ticket Access - ModMail
 Permet d'ajouter ou de retirer un membre du staff sur un ticket en cours,
 en modifiant les permissions du canal Discord associé au thread ModMail.
 
-Seuls les membres possédant le rôle HELPER_ROLE_ID (défini ci-dessous)
-peuvent être ajoutés/retirés d'un ticket via ces commandes.
+Seuls les membres possédant le rôle "helper" (configurable via
+?setticketaccessrole) peuvent être ajoutés/retirés d'un ticket via ces
+commandes.
 
 COMMANDES :
+  ?setticketaccessrole <ID>    — Configure le rôle requis (ADMINISTRATOR)
   ?addtoticket <membre>        — Donne accès au ticket courant (MODERATOR)
   ?removefromticket <membre>   — Retire l'accès au ticket courant (MODERATOR)
 """
@@ -14,9 +16,6 @@ import discord
 from discord.ext import commands
 from core import checks
 from core.models import PermissionLevel
-
-# ID du rôle requis pour qu'un membre puisse être ajouté/retiré d'un ticket.
-HELPER_ROLE_ID = 326464995682418688
 
 COLOR_SUCCESS = discord.Color.green()
 COLOR_INFO = discord.Color.blue()
@@ -29,6 +28,51 @@ class TicketAccess(commands.Cog):
 
     def __init__(self, bot):
         self.bot = bot
+        self.db = bot.plugin_db.get_partition(self)
+        bot.loop.create_task(self.ensure_config_keys())
+
+    async def ensure_config_keys(self):
+        """S'assure que toutes les clés de configuration nécessaires existent."""
+        default_keys = {
+            "helper_role_id": None,
+        }
+        for key, default_value in default_keys.items():
+            if await self.get_config(key) is None:
+                await self.set_config(key, default_value)
+
+    async def get_config(self, key):
+        """Récupère une configuration spécifique."""
+        config = await self.db.find_one({"_id": key})
+        return config['value'] if config else None
+
+    async def set_config(self, key, value):
+        """Met à jour une configuration spécifique."""
+        await self.db.find_one_and_update({"_id": key}, {"$set": {"value": value}}, upsert=True)
+
+    @commands.Cog.listener()
+    async def on_ready(self):
+        """Déclenché quand le bot est prêt."""
+        await self.ensure_config_keys()
+
+    # ── Configuration du rôle requis ────────────────────────────────────────
+
+    @commands.command(name="setticketaccessrole")
+    @checks.has_permissions(PermissionLevel.ADMINISTRATOR)
+    async def set_ticket_access_role(self, ctx, role_id: int):
+        """Définit l'ID du rôle requis pour être ajouté/retiré d'un ticket."""
+        role = ctx.guild.get_role(role_id)
+        if role is None:
+            await self._send_error(
+                ctx, "❌ Rôle introuvable",
+                f"Aucun rôle avec l'ID `{role_id}` n'existe sur ce serveur.",
+            )
+            return
+        await self.set_config("helper_role_id", str(role_id))
+        await ctx.send(embed=discord.Embed(
+            title="✅ Rôle configuré",
+            description=f"Le rôle requis pour la gestion des tickets est désormais {role.mention}.",
+            color=COLOR_SUCCESS,
+        ))
 
     async def _get_thread(self, ctx):
         """Vérifie que la commande est utilisée dans un canal de ticket ModMail."""
@@ -37,12 +81,15 @@ class TicketAccess(commands.Cog):
     async def _send_error(self, ctx, title: str, description: str):
         await ctx.send(embed=discord.Embed(title=title, description=description, color=COLOR_DANGER))
 
-    def _get_helper_role(self, ctx) -> discord.Role:
-        return ctx.guild.get_role(HELPER_ROLE_ID)
+    async def _get_helper_role(self, ctx) -> discord.Role:
+        role_id = await self.get_config("helper_role_id")
+        if role_id is None:
+            return None
+        return ctx.guild.get_role(int(role_id))
 
-    def _check_role(self, ctx, member: discord.Member):
+    async def _check_role(self, ctx, member: discord.Member):
         """Retourne (ok, helper_role). ok=False si le rôle est introuvable ou absent du membre."""
-        helper_role = self._get_helper_role(ctx)
+        helper_role = await self._get_helper_role(ctx)
         if helper_role is None:
             return False, None
         return (helper_role in member.roles), helper_role
@@ -53,11 +100,11 @@ class TicketAccess(commands.Cog):
     @checks.has_permissions(PermissionLevel.MODERATOR)
     async def add_to_ticket(self, ctx, member: discord.Member):
         """Ajoute un membre au ticket courant (accès lecture/écriture au canal)."""
-        ok, helper_role = self._check_role(ctx, member)
+        ok, helper_role = await self._check_role(ctx, member)
         if helper_role is None:
             await self._send_error(
-                ctx, "❌ Rôle introuvable",
-                f"Le rôle configuré (ID `{HELPER_ROLE_ID}`) n'existe pas sur ce serveur.",
+                ctx, "❌ Rôle non configuré",
+                "Aucun rôle n'est configuré. Utilisez `?setticketaccessrole [ID]` pour en définir un.",
             )
             return
         if not ok:
@@ -124,11 +171,11 @@ class TicketAccess(commands.Cog):
     @checks.has_permissions(PermissionLevel.MODERATOR)
     async def remove_from_ticket(self, ctx, member: discord.Member):
         """Retire l'accès d'un membre au ticket courant."""
-        ok, helper_role = self._check_role(ctx, member)
+        ok, helper_role = await self._check_role(ctx, member)
         if helper_role is None:
             await self._send_error(
-                ctx, "❌ Rôle introuvable",
-                f"Le rôle configuré (ID `{HELPER_ROLE_ID}`) n'existe pas sur ce serveur.",
+                ctx, "❌ Rôle non configuré",
+                "Aucun rôle n'est configuré. Utilisez `?setticketaccessrole [ID]` pour en définir un.",
             )
             return
         if not ok:
